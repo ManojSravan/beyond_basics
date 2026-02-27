@@ -1,0 +1,465 @@
+# React State Management Cheatsheet
+
+---
+
+## 1. `useState`
+
+| Pattern | When to Use | Example |
+|--------|-------------|---------|
+| Simple value | Single piece of local UI state | `const [count, setCount] = useState(0)` |
+| Object state | Grouping related fields | `const [form, setForm] = useState({ name: '', email: '' })` |
+| Lazy initializer | Expensive initial computation | `useState(() => computeExpensiveValue())` |
+| Previous state | When new state depends on old | `setCount(prev => prev + 1)` |
+| Boolean toggle | Show/hide, on/off | `setOpen(prev => !prev)` |
+
+### Key Rules
+- State updates are **asynchronous** — never read state right after setting it.
+- Always use the **functional updater** form (`prev => ...`) when new state depends on old.
+- For objects, always **spread** the old state — `useState` does not merge like `setState` in class components.
+
+```js
+// ✅ Correct — spread to preserve other fields
+setForm(prev => ({ ...prev, name: 'Alice' }))
+
+// ❌ Wrong — wipes out email
+setForm({ name: 'Alice' })
+```
+
+### Tradeoffs
+| ✅ Pros | ❌ Cons |
+|--------|--------|
+| Simple, minimal boilerplate | Gets messy with deeply nested state |
+| Perfect for local UI state | Not suitable for shared/global state |
+| Built-in, no dependencies | Multiple related states cause re-render cascades |
+
+---
+
+## 2. `useReducer`
+
+| Pattern | When to Use | Example |
+|--------|-------------|---------|
+| Action-based updates | Multiple ways to update same state | `dispatch({ type: 'INCREMENT' })` |
+| Complex state object | State has many fields that change together | Form with validation, wizard steps |
+| State machine | Finite set of states with defined transitions | `idle → loading → success / error` |
+| Predictable updates | You want pure, testable state logic | Reducer extracted to separate file |
+
+### Basic Structure
+
+```js
+const initialState = { count: 0, status: 'idle' }
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'INCREMENT':
+      return { ...state, count: state.count + 1 }
+    case 'RESET':
+      return initialState
+    case 'SET_STATUS':
+      return { ...state, status: action.payload }
+    default:
+      throw new Error(`Unknown action: ${action.type}`)
+  }
+}
+
+const [state, dispatch] = useReducer(reducer, initialState)
+```
+
+### State Machine Pattern
+
+```js
+// Model UI flows as finite states — prevents impossible states
+const reducer = (state, action) => {
+  switch (state.status) {
+    case 'idle':
+      if (action.type === 'FETCH') return { status: 'loading', data: null, error: null }
+      break
+    case 'loading':
+      if (action.type === 'SUCCESS') return { status: 'success', data: action.payload, error: null }
+      if (action.type === 'ERROR')   return { status: 'error', data: null, error: action.payload }
+      break
+    case 'success':
+    case 'error':
+      if (action.type === 'RETRY') return { status: 'loading', data: null, error: null }
+      break
+  }
+  return state
+}
+```
+
+### Tradeoffs
+| ✅ Pros | ❌ Cons |
+|--------|--------|
+| Centralized, predictable state logic | More boilerplate than `useState` |
+| Reducer is a pure function — easy to test | Overkill for simple state |
+| Handles complex transitions cleanly | Action constants can feel verbose |
+| Works well with `useContext` for global state | No built-in async support |
+
+---
+
+## 3. `useContext`
+
+| Pattern | When to Use | Example |
+|--------|-------------|---------|
+| Theme / locale | App-wide config that rarely changes | `ThemeContext`, `I18nContext` |
+| Auth state | User session shared across many components | `AuthContext` with user + logout |
+| Avoid prop drilling | State needed by deeply nested children | Pass data 3+ levels deep |
+| Compound components | Implicit state sharing within a component group | `<Tabs>`, `<Accordion>` |
+
+### Basic Setup
+
+```js
+// 1. Create context
+const ThemeContext = createContext(null)
+
+// 2. Provide it at the right level
+export function ThemeProvider({ children }) {
+  const [theme, setTheme] = useState('dark')
+  return (
+    <ThemeContext.Provider value={{ theme, setTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  )
+}
+
+// 3. Consume with a custom hook (always wrap — never use raw useContext)
+export function useTheme() {
+  const ctx = useContext(ThemeContext)
+  if (!ctx) throw new Error('useTheme must be used within ThemeProvider')
+  return ctx
+}
+```
+
+### Context + useReducer (Mini Redux pattern)
+
+```js
+const StoreContext = createContext(null)
+
+export function StoreProvider({ children }) {
+  const [state, dispatch] = useReducer(reducer, initialState)
+  return (
+    <StoreContext.Provider value={{ state, dispatch }}>
+      {children}
+    </StoreContext.Provider>
+  )
+}
+
+export const useStore = () => useContext(StoreContext)
+```
+
+### Performance Gotcha — Splitting Contexts
+
+```js
+// ❌ Bad — every consumer re-renders when ANYTHING changes
+<AppContext.Provider value={{ user, theme, cart, dispatch }}>
+
+// ✅ Better — split by update frequency
+<UserContext.Provider value={user}>
+  <ThemeContext.Provider value={theme}>
+    <CartContext.Provider value={{ cart, dispatch }}>
+      {children}
+    </CartContext.Provider>
+  </ThemeContext.Provider>
+</UserContext.Provider>
+```
+
+### Tradeoffs
+| ✅ Pros | ❌ Cons |
+|--------|--------|
+| Built-in, zero dependencies | All consumers re-render on any context value change |
+| Great for low-frequency global state | Not optimized for high-frequency updates |
+| Eliminates prop drilling cleanly | Deep provider trees get unwieldy |
+| Works perfectly with `useReducer` | No selector support (no partial subscriptions) |
+
+---
+
+## 4. Lifting State Up
+
+| Pattern | When to Use | Example |
+|--------|-------------|---------|
+| Sibling communication | Two siblings need to share state | Search input + results list |
+| Single source of truth | Multiple components derive from same data | Selected item in a list |
+| Controlled components | Parent owns the data, child just renders | `<Input value={x} onChange={...} />` |
+
+### Example
+
+```js
+// ❌ Before lifting — siblings can't talk
+function Search() {
+  const [query, setQuery] = useState('')
+  // Results has no access to query
+}
+
+// ✅ After lifting — parent coordinates
+function SearchPage() {
+  const [query, setQuery] = useState('')
+  return (
+    <>
+      <SearchInput query={query} onChange={setQuery} />
+      <SearchResults query={query} />
+    </>
+  )
+}
+```
+
+### Colocation (opposite of lifting — equally important)
+
+> Move state **down** to the component that owns it. Don't lift unnecessarily.
+
+```js
+// ❌ Lifted too high — parent re-renders for tooltip hover
+function Page() {
+  const [tooltipOpen, setTooltipOpen] = useState(false)
+  return <Card tooltipOpen={tooltipOpen} setTooltipOpen={setTooltipOpen} />
+}
+
+// ✅ Colocated — only Tooltip re-renders
+function Card() {
+  return <Tooltip /> // Tooltip manages its own open state internally
+}
+```
+
+### Tradeoffs
+| ✅ Pros | ❌ Cons |
+|--------|--------|
+| Simple, explicit data flow | Prop drilling if lifted too high |
+| Easy to trace where state lives | Parent re-renders on every change |
+| No extra libraries | Can become unwieldy with 3+ siblings needing same state |
+
+---
+
+## 5. Derived State Patterns
+
+| Pattern | When to Use | Example |
+|--------|-------------|---------|
+| Compute during render | Value depends on existing state | `const total = items.reduce(...)` |
+| `useMemo` | Expensive computation, avoid recalculating | Filtered/sorted lists |
+| Avoid redundant state | State that can be derived shouldn't be stored | Don't store `fullName` if you have `first` + `last` |
+
+```js
+// ❌ Redundant state — gets out of sync
+const [items, setItems] = useState([])
+const [count, setCount] = useState(0) // redundant!
+
+// ✅ Derive it
+const [items, setItems] = useState([])
+const count = items.length // always in sync
+
+// ✅ Memoize expensive derivations
+const sortedItems = useMemo(
+  () => [...items].sort((a, b) => a.name.localeCompare(b.name)),
+  [items]
+)
+```
+
+---
+
+## 6. External State Management
+
+### When to reach for external state management
+- State shared across many **unrelated** parts of the tree
+- High-frequency updates where Context re-renders hurt performance
+- Complex async flows (fetching, caching, optimistic updates)
+- You need **DevTools**, time-travel debugging, or persistence
+
+---
+
+### Zustand
+
+**Philosophy:** Minimal, unopinionated, hooks-based store. No providers needed.
+
+```js
+import { create } from 'zustand'
+
+const useCartStore = create((set, get) => ({
+  items: [],
+  total: 0,
+  addItem: (item) => set(state => ({
+    items: [...state.items, item],
+    total: state.total + item.price
+  })),
+  removeItem: (id) => set(state => ({
+    items: state.items.filter(i => i.id !== id),
+    total: state.total - state.items.find(i => i.id === id).price
+  })),
+  clearCart: () => set({ items: [], total: 0 })
+}))
+
+// Usage — subscribe only to what you need (no unnecessary re-renders)
+function CartBadge() {
+  const count = useCartStore(state => state.items.length) // selector
+  return <span>{count}</span>
+}
+```
+
+| ✅ Pros | ❌ Cons |
+|--------|--------|
+| Tiny bundle (~1KB) | Less structure — easy to misuse in large teams |
+| No boilerplate, no providers | No built-in async conventions |
+| Selector-based subscriptions (perf) | Devtools less powerful than Redux |
+| Works outside React (vanilla JS access) | |
+
+---
+
+### Redux Toolkit (RTK)
+
+**Philosophy:** Structured, opinionated, batteries-included. Best for large apps.
+
+```js
+import { createSlice, configureStore } from '@reduxjs/toolkit'
+
+const cartSlice = createSlice({
+  name: 'cart',
+  initialState: { items: [], total: 0 },
+  reducers: {
+    addItem: (state, action) => {
+      state.items.push(action.payload)          // Immer — mutate directly
+      state.total += action.payload.price
+    },
+    removeItem: (state, action) => {
+      const idx = state.items.findIndex(i => i.id === action.payload)
+      state.total -= state.items[idx].price
+      state.items.splice(idx, 1)
+    }
+  }
+})
+
+export const { addItem, removeItem } = cartSlice.actions
+
+// Async with createAsyncThunk
+import { createAsyncThunk } from '@reduxjs/toolkit'
+
+export const fetchProducts = createAsyncThunk('products/fetch', async () => {
+  const res = await fetch('/api/products')
+  return res.json()
+})
+```
+
+| ✅ Pros | ❌ Cons |
+|--------|--------|
+| Excellent DevTools + time travel | More boilerplate vs Zustand/Jotai |
+| Strong conventions — scales in teams | Heavier bundle |
+| Immer built-in (mutable syntax) | Overkill for small/medium apps |
+| RTK Query for server state too | Provider setup required |
+
+---
+
+### Jotai
+
+**Philosophy:** Atomic state. Bottom-up. Each piece of state is an "atom."
+
+```js
+import { atom, useAtom } from 'jotai'
+
+const countAtom = atom(0)
+const doubledAtom = atom(get => get(countAtom) * 2) // derived atom
+
+function Counter() {
+  const [count, setCount] = useAtom(countAtom)
+  const doubled = useAtomValue(doubledAtom)
+  return <button onClick={() => setCount(c => c + 1)}>{count} (x2: {doubled})</button>
+}
+```
+
+| ✅ Pros | ❌ Cons |
+|--------|--------|
+| Fine-grained subscriptions | Mental model shift (atoms) |
+| No providers (mostly) | Less community resources vs Redux |
+| Great for derived/computed state | Can scatter state across files |
+| Tiny bundle | |
+
+---
+
+### TanStack Query (React Query)
+
+**Philosophy:** Server state is NOT the same as client state. Cache it separately.
+
+```js
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+
+// Fetching
+function Products() {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['products'],
+    queryFn: () => fetch('/api/products').then(r => r.json()),
+    staleTime: 5 * 60 * 1000, // cache for 5 min
+  })
+}
+
+// Mutations with optimistic update
+function useUpdateProduct() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (product) => fetch(`/api/products/${product.id}`, { method: 'PUT', body: JSON.stringify(product) }),
+    onMutate: async (newProduct) => {
+      await queryClient.cancelQueries({ queryKey: ['products'] })
+      const previous = queryClient.getQueryData(['products'])
+      queryClient.setQueryData(['products'], old =>
+        old.map(p => p.id === newProduct.id ? newProduct : p)
+      )
+      return { previous }
+    },
+    onError: (err, _, ctx) => queryClient.setQueryData(['products'], ctx.previous),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['products'] })
+  })
+}
+```
+
+| ✅ Pros | ❌ Cons |
+|--------|--------|
+| Handles caching, deduplication, refetching | Only for server/async state |
+| Background refetch, stale-while-revalidate | Needs pairing with client state tool |
+| Optimistic updates built-in | Learning curve for cache invalidation |
+| DevTools excellent | |
+
+---
+
+## 7. Decision Guide — Which Tool to Use?
+
+```
+Is the state used by only one component?
+  └── YES → useState / useReducer (keep it local)
+
+Is the state used by a few nearby components?
+  └── YES → Lift state up to common ancestor
+
+Is the state global but updates are infrequent (theme, auth, locale)?
+  └── YES → useContext + useReducer
+
+Is the state global and updates are frequent (UI state, filters, cart)?
+  └── YES → Zustand or Jotai
+
+Is this server/remote data (API responses, cache)?
+  └── YES → TanStack Query (+ Zustand/Jotai for client state)
+
+Is this a large team app needing strong conventions + devtools?
+  └── YES → Redux Toolkit (+ RTK Query for server state)
+```
+
+---
+
+## 8. Common Anti-patterns
+
+| Anti-pattern | Problem | Fix |
+|---|---|---|
+| Storing derived state | Gets out of sync | Compute during render or use `useMemo` |
+| Putting server data in useState | Manual loading/error/cache management | Use TanStack Query |
+| Everything in global store | Unnecessary complexity | Keep state as local as possible |
+| Missing functional updater | Stale closure bugs | Use `setState(prev => ...)` |
+| One big context | All consumers re-render always | Split contexts by update frequency |
+| Mutating state directly | React won't detect change | Always return new object/array |
+| `useEffect` to sync state | Unnecessary renders, complexity | Derive from existing state instead |
+
+---
+
+## 9. Quick Reference — State Colocation Rule
+
+> **Keep state as close as possible to where it's used. Only lift/globalize when necessary.**
+
+```
+Local UI state       → useState
+Complex local state  → useReducer
+Shared nearby        → Lift up
+Shared app-wide      → Context / Zustand / Jotai
+Server state         → TanStack Query
+Large team app       → Redux Toolkit
+```

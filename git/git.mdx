@@ -1,0 +1,496 @@
+# Git Cheatsheet — Effective Usage
+
+---
+
+## 1. Mental Model
+
+> Git is a **snapshot system**, not a diff system. Every commit is a full snapshot of your project at that point in time. Branches are just lightweight pointers to commits.
+
+```
+Working Directory  →  Staging Area (Index)  →  Local Repo  →  Remote Repo
+     (edit)              git add                git commit      git push
+                                          ←                ←
+                                        git checkout        git fetch / pull
+```
+
+| Term | What it means |
+|---|---|
+| **Working directory** | Files you're actively editing |
+| **Staging area** | What will go into the next commit |
+| **Local repo** | Your full commit history on your machine |
+| **Remote** | The shared repo (GitHub, GitLab, etc.) |
+| **HEAD** | Pointer to the commit you're currently on |
+| **Branch** | A movable pointer to a commit |
+| **Detached HEAD** | HEAD points to a commit directly, not a branch |
+
+---
+
+## 2. Setup
+
+```bash
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+git config --global core.editor "code --wait"   # VS Code as default editor
+git config --global init.defaultBranch main
+git config --global pull.rebase true            # rebase instead of merge on pull (recommended)
+
+# View all config
+git config --list
+```
+
+---
+
+## 3. Starting a Repo
+
+```bash
+# New project
+git init
+git add .
+git commit -m "Initial commit"
+git remote add origin https://github.com/user/repo.git
+git push -u origin main          # -u sets upstream, only needed first time
+
+# Existing project
+git clone https://github.com/user/repo.git
+git clone https://github.com/user/repo.git my-folder  # clone into specific folder
+```
+
+---
+
+## 4. Daily Workflow
+
+```bash
+# Check what's going on
+git status                        # what's changed, staged, untracked
+git diff                          # unstaged changes
+git diff --staged                 # staged changes (what's about to be committed)
+git log --oneline --graph         # visual commit history
+
+# Stage changes
+git add file.txt                  # stage specific file
+git add src/                      # stage entire directory
+git add -p                        # interactive — stage chunks, not whole files (very useful)
+git add .                         # stage everything (use carefully)
+
+# Commit
+git commit -m "feat: add product search"
+git commit --amend                # edit last commit message or add forgotten changes
+git commit --amend --no-edit      # amend without changing message
+
+# Push / Pull
+git push
+git push origin feature/search    # push specific branch
+git pull                          # fetch + merge (or rebase if configured)
+git fetch                         # download changes without applying them
+```
+
+---
+
+## 5. Commit Messages — Conventional Commits
+
+> Good commit messages make `git log` a useful history, not noise.
+
+```
+<type>(<scope>): <short summary>
+
+[optional body — explain WHY, not what]
+
+[optional footer — breaking changes, issue refs]
+```
+
+### Types
+
+| Type | When to use |
+|---|---|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `refactor` | Code change with no behavior change |
+| `chore` | Tooling, deps, config (no production code) |
+| `docs` | Documentation only |
+| `test` | Adding or fixing tests |
+| `style` | Formatting, whitespace (no logic change) |
+| `perf` | Performance improvement |
+| `ci` | CI/CD config changes |
+| `revert` | Reverting a previous commit |
+
+### Examples
+
+```bash
+git commit -m "feat(auth): add Google OAuth login"
+git commit -m "fix(cart): correct total when coupon applied"
+git commit -m "refactor(api): extract fetch logic into useApi hook"
+git commit -m "chore: upgrade react to v19"
+git commit -m "docs: add setup instructions to README"
+
+# Breaking change
+git commit -m "feat(api)!: change response shape for /products endpoint
+
+BREAKING CHANGE: items array is now nested under data.products"
+```
+
+### Rules for good commits
+- Subject line under **72 characters**
+- Use **imperative mood** — "add feature" not "added feature"
+- Explain **why** in the body, not what (the diff shows what)
+- One logical change per commit — don't bundle unrelated changes
+
+---
+
+## 6. Branching
+
+```bash
+# Create and switch
+git switch -c feature/user-auth          # modern way (Git 2.23+)
+git checkout -b feature/user-auth        # old way — same result
+
+# Switch branches
+git switch main
+git switch -                             # switch to previous branch
+
+# List branches
+git branch                               # local
+git branch -r                            # remote
+git branch -a                            # all
+
+# Delete
+git branch -d feature/done              # safe delete (fails if unmerged)
+git branch -D feature/abandon           # force delete
+
+# Rename
+git branch -m old-name new-name
+
+# Push new branch to remote
+git push -u origin feature/user-auth
+```
+
+### Branch naming conventions
+
+```
+feature/short-description       → new features
+fix/bug-description             → bug fixes
+refactor/what-is-changing       → refactors
+chore/what-task                 → maintenance
+release/v1.2.0                  → release branches
+hotfix/critical-bug             → urgent production fixes
+```
+
+---
+
+## 7. Merging vs Rebasing
+
+| | Merge | Rebase |
+|---|---|---|
+| **History** | Preserves full history with merge commit | Linear, clean history |
+| **When** | Integrating completed features | Keeping feature branch up to date |
+| **Conflict** | Resolve once | Resolve per commit |
+| **Safety** | Safe on shared branches | Never rebase shared/public branches |
+
+### Merge
+
+```bash
+git switch main
+git merge feature/search           # creates merge commit
+git merge --no-ff feature/search   # always create merge commit (good for PRs)
+git merge --squash feature/search  # squash all commits into one staged change
+```
+
+### Rebase
+
+```bash
+# Keep feature branch up to date with main (do this often)
+git switch feature/search
+git rebase main                    # replay your commits on top of latest main
+
+# Interactive rebase — clean up commits before PR
+git rebase -i HEAD~3               # rewrite last 3 commits interactively
+git rebase -i main                 # rewrite all commits since branching from main
+```
+
+### Interactive rebase commands
+
+```
+pick   → keep commit as-is
+reword → keep commit, edit message
+edit   → pause to amend commit
+squash → merge into previous commit, combine messages
+fixup  → merge into previous commit, discard this message
+drop   → delete commit entirely
+```
+
+```bash
+# Common flow — squash WIP commits before PR
+git rebase -i main
+# In editor: change 'pick' to 'fixup' on WIP commits, keep first as 'reword'
+# Result: one clean commit instead of "WIP", "fix", "fix2", "finally works"
+```
+
+---
+
+## 8. Undoing Things
+
+| Situation | Command |
+|---|---|
+| Unstage a file | `git restore --staged file.txt` |
+| Discard working directory changes | `git restore file.txt` |
+| Discard all unstaged changes | `git restore .` |
+| Undo last commit, keep changes staged | `git reset --soft HEAD~1` |
+| Undo last commit, keep changes unstaged | `git reset HEAD~1` |
+| Undo last commit, discard changes | `git reset --hard HEAD~1` ⚠️ |
+| Undo a pushed commit safely | `git revert <commit-hash>` |
+| Recover deleted branch or lost commit | `git reflog` |
+
+```bash
+# reset vs revert
+# reset — rewrites history (only use on local, unpushed commits)
+git reset --soft HEAD~1     # undo commit, changes stay staged
+git reset HEAD~1            # undo commit, changes go back to working dir
+git reset --hard HEAD~1     # undo commit AND discard all changes ⚠️ destructive
+
+# revert — safe, creates a new commit that undoes changes
+git revert abc1234          # use this for pushed commits
+
+# reflog — your safety net, shows everything Git has tracked
+git reflog                  # find the hash of lost commit
+git switch -c recovery-branch abc1234  # restore it
+```
+
+---
+
+## 9. Stashing
+
+Save work temporarily without committing.
+
+```bash
+git stash                          # stash working dir + staged changes
+git stash push -m "WIP: search filter"  # stash with a name
+git stash -u                       # include untracked files
+
+git stash list                     # view all stashes
+git stash pop                      # apply latest stash + delete it
+git stash apply stash@{2}          # apply specific stash, keep it in list
+git stash drop stash@{0}           # delete specific stash
+git stash clear                    # delete all stashes
+
+# Stash only specific files
+git stash push -m "just the filter" src/components/Filter.tsx
+```
+
+---
+
+## 10. Working with Remotes
+
+```bash
+git remote -v                           # list remotes
+git remote add origin <url>             # add remote
+git remote set-url origin <new-url>     # change remote URL
+
+git fetch origin                        # download all remote changes
+git fetch origin main                   # download specific branch
+
+git pull                                # fetch + merge/rebase current branch
+git pull origin main                    # pull specific branch
+
+git push origin feature/search          # push branch
+git push --force-with-lease             # safer force push (fails if remote changed)
+git push -u origin feature/search       # push + set upstream tracking
+
+# Delete remote branch
+git push origin --delete feature/old-branch
+
+# Track remote branch
+git switch --track origin/feature/search
+```
+
+> **Never use `git push --force` on shared branches.** Use `--force-with-lease` — it checks if the remote has changed since your last fetch.
+
+---
+
+## 11. Useful Everyday Commands
+
+```bash
+# See who changed what line
+git blame file.tsx                      # line-by-line author + commit
+git blame -L 20,40 file.tsx             # specific line range
+
+# Search through history
+git log --oneline --grep="search term"  # find commits by message
+git log --oneline -S "functionName"     # find commits that added/removed string
+git log --oneline --author="Alice"      # filter by author
+git log --oneline --since="2 weeks ago"
+git log --oneline main..feature/search  # commits on branch not in main
+
+# Find when a bug was introduced
+git bisect start
+git bisect bad                          # current commit is broken
+git bisect good v1.2.0                  # this tag was working
+# Git checks out middle commit — test it, then:
+git bisect good                         # or git bisect bad
+# Repeat until Git finds the culprit
+git bisect reset                        # when done
+
+# Cherry pick — apply a specific commit to current branch
+git cherry-pick abc1234
+
+# Show what a commit changed
+git show abc1234
+
+# Compare branches
+git diff main..feature/search           # diff between two branches
+git diff main...feature/search          # diff since branch point (more useful)
+```
+
+---
+
+## 12. `.gitignore`
+
+```bash
+# Common patterns
+node_modules/
+dist/
+build/
+.env
+.env.local
+.env*.local
+*.log
+.DS_Store
+.vscode/
+.idea/
+coverage/
+*.test.js.snap   # optional — some teams commit snapshots
+
+# Ignore globally (your machine's personal ignores, not per-project)
+git config --global core.excludesfile ~/.gitignore_global
+```
+
+```bash
+# Already committed a file you now want to ignore
+git rm --cached .env                  # remove from tracking, keep file locally
+git rm --cached -r node_modules/      # remove directory from tracking
+# Then add to .gitignore and commit
+```
+
+---
+
+## 13. Pull Request Workflow (GitHub Flow)
+
+```bash
+# 1. Start from fresh main
+git switch main
+git pull
+
+# 2. Create feature branch
+git switch -c feature/add-search
+
+# 3. Work, commit often
+git add -p
+git commit -m "feat(search): add search input component"
+git commit -m "feat(search): wire up search to product list"
+
+# 4. Keep branch up to date during development
+git fetch origin
+git rebase origin/main               # replay your commits on latest main
+
+# 5. Clean up commits before PR (optional but good practice)
+git rebase -i origin/main            # squash WIP commits, fix messages
+
+# 6. Push
+git push -u origin feature/add-search
+
+# 7. Open PR on GitHub → get review → merge
+
+# 8. Clean up
+git switch main
+git pull
+git branch -d feature/add-search
+git push origin --delete feature/add-search
+```
+
+---
+
+## 14. Tags and Releases
+
+```bash
+# Lightweight tag (just a pointer)
+git tag v1.0.0
+
+# Annotated tag (recommended — includes message, author, date)
+git tag -a v1.0.0 -m "Release version 1.0.0"
+
+# Tag a past commit
+git tag -a v0.9.0 abc1234 -m "Beta release"
+
+# Push tags
+git push origin v1.0.0              # push specific tag
+git push origin --tags              # push all tags
+
+# List and delete
+git tag                             # list all tags
+git tag -d v1.0.0                   # delete local tag
+git push origin --delete v1.0.0     # delete remote tag
+```
+
+---
+
+## 15. Git Aliases (time savers)
+
+```bash
+git config --global alias.st "status"
+git config --global alias.co "switch"
+git config --global alias.lg "log --oneline --graph --decorate --all"
+git config --global alias.undo "reset HEAD~1"
+git config --global alias.unstage "restore --staged"
+git config --global alias.aliases "config --get-regexp alias"
+
+# Usage
+git st
+git lg
+git undo
+```
+
+---
+
+## 16. Anti-patterns
+
+| Anti-pattern | Problem | Fix |
+|---|---|---|
+| Committing directly to `main` | No review, easy to break prod | Always branch + PR |
+| Giant commits with everything | Impossible to review or revert | Small, focused commits |
+| `git add .` without reviewing | Accidentally commit secrets, build files | Use `git add -p` or check `git diff --staged` |
+| `git push --force` on shared branches | Destroys teammates' history | Use `--force-with-lease`, or better, don't force push shared branches |
+| Vague commit messages ("fix", "WIP", "stuff") | Useless history | Follow Conventional Commits |
+| Committing `.env` or secrets | Security breach | `.gitignore` before first commit, use `git rm --cached` if already tracked |
+| Never fetching before branching | Branch based on stale main | Always `git pull` before creating a branch |
+| Rebasing shared/public branches | Rewrites history others depend on | Only rebase local, unpushed commits |
+| Resolving conflicts blindly | Broken code gets merged | Understand both sides, test after resolving |
+
+---
+
+## 17. Quick Reference
+
+```
+Daily:
+  git status              → what's changed
+  git add -p              → stage interactively
+  git commit -m "..."     → commit with message
+  git push                → push to remote
+  git pull                → sync from remote
+
+Branching:
+  git switch -c name      → create + switch branch
+  git switch main         → switch to main
+  git rebase main         → update branch with latest main
+  git merge --no-ff feat  → merge with commit
+
+Undoing:
+  git restore file        → discard working dir changes
+  git restore --staged f  → unstage
+  git reset HEAD~1        → undo last commit (keep changes)
+  git revert <hash>       → undo pushed commit safely
+  git reflog              → recover anything
+
+Inspection:
+  git log --oneline --graph
+  git diff --staged
+  git blame file.tsx
+  git bisect              → find bug-introducing commit
+```

@@ -1,0 +1,589 @@
+# React Routing Cheatsheet
+
+---
+
+## 1. Mental Model
+
+> The router keeps your UI in sync with the URL. The URL is the source of truth for navigation state.
+
+| Concept | What it means |
+|---|---|
+| **Route** | A mapping between a URL pattern and a component |
+| **Params** | Dynamic segments in the URL — `/products/:id` |
+| **Search params** | Query string — `/products?category=shoes&sort=asc` |
+| **Outlet** | Where nested child routes render inside a parent |
+| **Loader** | Fetch data before a route renders (v6.4+) |
+| **Action** | Handle form submissions / mutations on a route (v6.4+) |
+
+---
+
+## 2. Setup
+
+```bash
+npm install react-router-dom
+```
+
+```tsx
+// main.tsx — two ways to define routes
+
+// Option A: JSX-based (simpler, good for most apps)
+import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <RootLayout />,
+    children: [
+      { index: true, element: <Home /> },
+      { path: 'products', element: <Products /> },
+      { path: 'products/:id', element: <ProductDetail /> },
+    ]
+  }
+])
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <RouterProvider router={router} />
+)
+```
+
+---
+
+## 3. Core Components
+
+| Component | Purpose | Example |
+|---|---|---|
+| `<Link>` | Client-side navigation, no page reload | `<Link to="/products">Products</Link>` |
+| `<NavLink>` | Like Link but adds `active` class automatically | Nav menus, sidebars |
+| `<Outlet>` | Renders matched child route | Inside layout components |
+| `<Navigate>` | Declarative redirect | `<Navigate to="/login" replace />` |
+
+```tsx
+// NavLink — active styling built in
+<NavLink
+  to="/products"
+  className={({ isActive }) => isActive ? 'text-blue-500 font-bold' : 'text-gray-500'}
+>
+  Products
+</NavLink>
+
+// Navigate — redirect programmatically in JSX
+function ProtectedPage() {
+  const { user } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  return <Dashboard />
+}
+```
+
+---
+
+## 4. Core Hooks
+
+| Hook | Returns | When to use |
+|---|---|---|
+| `useNavigate()` | `navigate` function | Programmatic navigation after action |
+| `useParams()` | Route params object | Get `:id`, `:slug` from URL |
+| `useSearchParams()` | `[searchParams, setSearchParams]` | Read/write query string |
+| `useLocation()` | Current location object | Access `pathname`, `state`, `search` |
+| `useMatch()` | Match object or null | Check if current route matches pattern |
+| `useLoaderData()` | Data returned from loader | Access pre-fetched route data |
+| `useActionData()` | Data returned from action | Access form submission result |
+
+---
+
+## 5. Navigation Patterns
+
+### Programmatic navigation
+
+```tsx
+import { useNavigate } from 'react-router-dom'
+
+function LoginForm() {
+  const navigate = useNavigate()
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    await login(credentials)
+    navigate('/dashboard')                    // go forward
+    navigate(-1)                              // go back (like browser back)
+    navigate('/login', { replace: true })     // replace history (no back button)
+    navigate('/checkout', { state: { from: '/cart' } }) // pass state
+  }
+}
+```
+
+### Reading route params
+
+```tsx
+// Route: /products/:category/:id
+function ProductDetail() {
+  const { category, id } = useParams()
+  // category = 'shoes', id = '42' for /products/shoes/42
+}
+```
+
+### Search params as state
+
+```tsx
+// Treat URL search params as your filter/sort state
+// ✅ Shareable, bookmarkable, survives refresh
+function ProductList() {
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const category = searchParams.get('category') ?? 'all'
+  const sort = searchParams.get('sort') ?? 'asc'
+  const page = Number(searchParams.get('page') ?? '1')
+
+  function setCategory(value: string) {
+    setSearchParams(prev => {
+      prev.set('category', value)
+      prev.set('page', '1') // reset page on filter change
+      return prev
+    })
+  }
+
+  return (
+    <>
+      <select value={category} onChange={e => setCategory(e.target.value)}>
+        <option value="all">All</option>
+        <option value="shoes">Shoes</option>
+      </select>
+      <ProductGrid category={category} sort={sort} page={page} />
+    </>
+  )
+}
+```
+
+### Passing state through navigation
+
+```tsx
+// Send state without putting it in URL
+navigate('/order-confirm', { state: { orderId: '123', total: 99 } })
+
+// Receive it
+function OrderConfirm() {
+  const location = useLocation()
+  const { orderId, total } = location.state
+  // ⚠️ State is lost on refresh — only use for ephemeral UI hints
+}
+```
+
+---
+
+## 6. Nested Routes & Layouts
+
+The most powerful concept in React Router v6.
+
+```tsx
+// Route config
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <RootLayout />,       // persistent shell (nav, footer)
+    children: [
+      { index: true, element: <Home /> },
+      {
+        path: 'dashboard',
+        element: <DashboardLayout />,  // nested layout (sidebar)
+        children: [
+          { index: true, element: <DashboardHome /> },
+          { path: 'analytics', element: <Analytics /> },
+          { path: 'settings', element: <Settings /> },
+        ]
+      },
+      { path: 'products', element: <Products /> },
+    ]
+  }
+])
+
+// RootLayout.tsx — renders persistent UI + child routes
+function RootLayout() {
+  return (
+    <div>
+      <Navbar />
+      <main>
+        <Outlet />  {/* child routes render here */}
+      </main>
+      <Footer />
+    </div>
+  )
+}
+
+// DashboardLayout.tsx — nested layout with its own Outlet
+function DashboardLayout() {
+  return (
+    <div className="flex">
+      <Sidebar />
+      <div className="flex-1">
+        <Outlet />  {/* dashboard child routes render here */}
+      </div>
+    </div>
+  )
+}
+```
+
+### Index routes
+
+```tsx
+// index: true — renders when parent path matches exactly
+{
+  path: 'dashboard',
+  element: <DashboardLayout />,
+  children: [
+    { index: true, element: <DashboardHome /> },  // renders at /dashboard
+    { path: 'analytics', element: <Analytics /> } // renders at /dashboard/analytics
+  ]
+}
+```
+
+---
+
+## 7. Protected Routes
+
+```tsx
+// Pattern 1 — wrapper component
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth()
+  const location = useLocation()
+
+  if (!user) {
+    // Redirect to login, save attempted URL to redirect back after login
+    return <Navigate to="/login" state={{ from: location }} replace />
+  }
+
+  return children
+}
+
+// Usage in route config
+{
+  path: 'dashboard',
+  element: (
+    <RequireAuth>
+      <Dashboard />
+    </RequireAuth>
+  )
+}
+
+// Pattern 2 — layout route (cleaner for multiple protected routes)
+function AuthLayout() {
+  const { user } = useAuth()
+  const location = useLocation()
+
+  if (!user) return <Navigate to="/login" state={{ from: location }} replace />
+  return <Outlet />
+}
+
+const router = createBrowserRouter([
+  {
+    element: <AuthLayout />,      // no path — just a guard
+    children: [
+      { path: '/dashboard', element: <Dashboard /> },
+      { path: '/settings',  element: <Settings /> },
+      { path: '/profile',   element: <Profile /> },
+    ]
+  },
+  { path: '/login', element: <Login /> }
+])
+
+// Redirect back after login
+function Login() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const from = location.state?.from?.pathname ?? '/dashboard'
+
+  async function handleLogin() {
+    await login()
+    navigate(from, { replace: true }) // go back to where they came from
+  }
+}
+```
+
+---
+
+## 8. Role-Based Access
+
+```tsx
+function RequireRole({ role, children }: { role: string, children: React.ReactNode }) {
+  const { user } = useAuth()
+
+  if (!user) return <Navigate to="/login" replace />
+  if (!user.roles.includes(role)) return <Navigate to="/unauthorized" replace />
+
+  return children
+}
+
+// Route config
+{ path: '/admin', element: <RequireRole role="admin"><AdminPanel /></RequireRole> }
+```
+
+---
+
+## 9. Data Loading with Loaders (v6.4+)
+
+Load data before the route renders — no loading spinners needed.
+
+```tsx
+// Define loader alongside route
+import { createBrowserRouter, useLoaderData } from 'react-router-dom'
+
+const router = createBrowserRouter([
+  {
+    path: 'products/:id',
+    element: <ProductDetail />,
+    loader: async ({ params }) => {
+      const product = await fetchProduct(params.id)
+      if (!product) throw new Response('Not Found', { status: 404 })
+      return product
+    },
+    errorElement: <ProductError />
+  }
+])
+
+// Component — data is guaranteed to be ready
+function ProductDetail() {
+  const product = useLoaderData() as Product
+  // No isLoading check needed — loader ran before render
+  return <h1>{product.name}</h1>
+}
+```
+
+### Loader with TanStack Query (best of both worlds)
+
+```tsx
+// Prefetch in loader, read from cache in component
+const productDetailQuery = (id: string) => ({
+  queryKey: ['product', id],
+  queryFn: () => fetchProduct(id),
+})
+
+// Loader
+loader: async ({ params }) => {
+  await queryClient.ensureQueryData(productDetailQuery(params.id))
+  return null
+}
+
+// Component
+function ProductDetail() {
+  const { id } = useParams()
+  const { data: product } = useQuery(productDetailQuery(id!))
+  // Data always available — loaded by loader or from cache
+}
+```
+
+---
+
+## 10. Lazy Loading Routes (Code Splitting)
+
+Split your bundle — only load route code when needed.
+
+```tsx
+import { lazy, Suspense } from 'react'
+
+const Dashboard  = lazy(() => import('./pages/Dashboard'))
+const Analytics  = lazy(() => import('./pages/Analytics'))
+const AdminPanel = lazy(() => import('./pages/AdminPanel'))
+
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <RootLayout />,
+    children: [
+      {
+        path: 'dashboard',
+        element: (
+          <Suspense fallback={<PageSpinner />}>
+            <Dashboard />
+          </Suspense>
+        )
+      },
+      {
+        path: 'analytics',
+        element: (
+          <Suspense fallback={<PageSpinner />}>
+            <Analytics />
+          </Suspense>
+        )
+      }
+    ]
+  }
+])
+
+// Or — lazy at the route level (v6.4+ feature)
+const router = createBrowserRouter([
+  {
+    path: 'dashboard',
+    lazy: async () => {
+      const { Dashboard } = await import('./pages/Dashboard')
+      return { Component: Dashboard }
+    }
+  }
+])
+```
+
+---
+
+## 11. 404 and Error Routes
+
+```tsx
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <RootLayout />,
+    errorElement: <RootError />,   // catches all errors in this subtree
+    children: [
+      {
+        path: 'products/:id',
+        element: <ProductDetail />,
+        errorElement: <ProductError />, // scoped error UI
+        loader: async ({ params }) => {
+          const product = await fetchProduct(params.id)
+          if (!product) throw new Response('Not Found', { status: 404 })
+          return product
+        }
+      }
+    ]
+  },
+  { path: '*', element: <NotFound /> }  // catch-all 404
+])
+
+// Error component
+import { useRouteError, isRouteErrorResponse } from 'react-router-dom'
+
+function RootError() {
+  const error = useRouteError()
+
+  if (isRouteErrorResponse(error)) {
+    if (error.status === 404) return <NotFound />
+    if (error.status === 401) return <Unauthorized />
+    return <div>Error {error.status}: {error.statusText}</div>
+  }
+
+  return <div>Something went wrong</div>
+}
+```
+
+---
+
+## 12. Common Patterns
+
+### Active link with auto-styling
+
+```tsx
+function Sidebar() {
+  return (
+    <nav>
+      {links.map(link => (
+        <NavLink
+          key={link.to}
+          to={link.to}
+          end  // exact match — prevents /dashboard matching /dashboard/analytics
+          className={({ isActive, isPending }) =>
+            `block px-4 py-2 rounded ${
+              isActive ? 'bg-blue-100 text-blue-700' :
+              isPending ? 'text-gray-400' : 'text-gray-700 hover:bg-gray-100'
+            }`
+          }
+        >
+          {link.label}
+        </NavLink>
+      ))}
+    </nav>
+  )
+}
+```
+
+### Breadcrumbs from route matches
+
+```tsx
+import { useMatches } from 'react-router-dom'
+
+// Add handle to routes
+{ path: 'products', element: <Products />, handle: { crumb: 'Products' } }
+{ path: 'products/:id', element: <ProductDetail />, handle: { crumb: (data) => data.name } }
+
+function Breadcrumbs() {
+  const matches = useMatches()
+  const crumbs = matches
+    .filter(m => m.handle?.crumb)
+    .map(m => ({
+      label: typeof m.handle.crumb === 'function'
+        ? m.handle.crumb(m.data)
+        : m.handle.crumb,
+      path: m.pathname
+    }))
+
+  return (
+    <nav>
+      {crumbs.map((crumb, i) => (
+        <span key={crumb.path}>
+          {i < crumbs.length - 1
+            ? <Link to={crumb.path}>{crumb.label}</Link>
+            : <span>{crumb.label}</span>
+          }
+          {i < crumbs.length - 1 && ' / '}
+        </span>
+      ))}
+    </nav>
+  )
+}
+```
+
+### Scroll restoration
+
+```tsx
+import { ScrollRestoration } from 'react-router-dom'
+
+// Add once inside your root layout — handles scroll automatically
+function RootLayout() {
+  return (
+    <>
+      <Navbar />
+      <Outlet />
+      <ScrollRestoration />
+    </>
+  )
+}
+```
+
+---
+
+## 13. Anti-patterns
+
+| Anti-pattern | Problem | Fix |
+|---|---|---|
+| Fetching in `useEffect` inside routed components | Waterfall loading, flicker | Use loaders or TanStack Query |
+| Storing filter/sort state in `useState` | Lost on refresh, not shareable | Use `useSearchParams` |
+| Using `window.location.href` for navigation | Full page reload, loses React state | Use `useNavigate()` |
+| Nesting `<BrowserRouter>` multiple times | Conflicts, unexpected behavior | One router at the app root only |
+| Not using `replace` on auth redirects | Broken back button after login | `navigate('/login', { replace: true })` |
+| Forgetting `end` prop on NavLink | Parent route always appears active | Add `end` to exact-match links |
+| Putting everything in one flat route config | Hard to reason about layout | Use nested routes + layouts |
+
+---
+
+## 14. Quick Reference
+
+```
+Navigation:
+  <Link to="/path">          — client-side link
+  <NavLink to="/path">       — link with active state
+  useNavigate()              — programmatic navigation
+  <Navigate to="/path" />    — declarative redirect
+
+Reading URL:
+  useParams()                — /products/:id → { id }
+  useSearchParams()          — ?sort=asc → searchParams.get('sort')
+  useLocation()              — { pathname, search, state, hash }
+
+Layout:
+  <Outlet />                 — where child routes render
+  index: true                — renders at parent path exactly
+
+Guards:
+  RequireAuth wrapper        — redirect to login if no user
+  Layout route (no path)     — guard multiple routes at once
+
+Performance:
+  lazy() + <Suspense>        — code split routes
+  route lazy property        — v6.4+ lazy loading
+  loaders                    — fetch before render, no waterfall
+```

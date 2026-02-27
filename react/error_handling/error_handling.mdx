@@ -1,0 +1,519 @@
+# React Error Handling Cheatsheet
+
+---
+
+## 1. Mental Model
+
+> Errors in React fall into two categories — **render errors** (caught by Error Boundaries) and **async errors** (fetch failures, promise rejections). They need different strategies.
+
+| Error Type | Where it happens | Caught by |
+|---|---|---|
+| Render / JS errors | During component render, lifecycle | Error Boundary |
+| Event handler errors | onClick, onChange, etc. | try/catch |
+| Async / fetch errors | useEffect, data fetching | try/catch + state |
+| Route errors | Loaders, actions | `errorElement` in router |
+| Unhandled promise rejections | Anywhere async | Global handler |
+
+---
+
+## 2. Error Boundaries
+
+The only way to catch render-time errors in React. Must be a class component (or use a library).
+
+### Basic Error Boundary
+
+```tsx
+import { Component, ReactNode } from 'react'
+
+interface Props {
+  fallback: ReactNode
+  children: ReactNode
+}
+
+interface State {
+  hasError: boolean
+  error: Error | null
+}
+
+class ErrorBoundary extends Component<Props, State> {
+  state: State = { hasError: false, error: null }
+
+  static getDerivedStateFromError(error: Error): State {
+    // Update state so next render shows fallback UI
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, info: { componentStack: string }) {
+    // Log to error reporting service
+    console.error('Error caught by boundary:', error, info.componentStack)
+    logErrorToService(error, info)
+  }
+
+  render() {
+    if (this.state.hasError) return this.props.fallback
+    return this.props.children
+  }
+}
+
+// Usage
+<ErrorBoundary fallback={<ErrorPage />}>
+  <App />
+</ErrorBoundary>
+```
+
+### What Error Boundaries do NOT catch
+
+```
+❌ Event handlers             → use try/catch inside the handler
+❌ Async code (setTimeout)    → use try/catch + state
+❌ Server-side rendering      → handle separately
+❌ Errors in the boundary itself → caught by parent boundary
+```
+
+### react-error-boundary (recommended — skip writing class components)
+
+```bash
+npm install react-error-boundary
+```
+
+```tsx
+import { ErrorBoundary } from 'react-error-boundary'
+
+// Simple fallback component
+function ErrorFallback({ error, resetErrorBoundary }) {
+  return (
+    <div role="alert">
+      <h2>Something went wrong</h2>
+      <pre>{error.message}</pre>
+      <button onClick={resetErrorBoundary}>Try again</button>
+    </div>
+  )
+}
+
+// Usage
+<ErrorBoundary
+  FallbackComponent={ErrorFallback}
+  onError={(error, info) => logErrorToService(error, info)}
+  onReset={() => {
+    // Reset app state that caused the error if needed
+  }}
+>
+  <ProductList />
+</ErrorBoundary>
+
+// Inline fallback
+<ErrorBoundary fallback={<p>Something went wrong</p>}>
+  <Widget />
+</ErrorBoundary>
+```
+
+### Resetting an Error Boundary programmatically
+
+```tsx
+import { ErrorBoundary, useErrorBoundary } from 'react-error-boundary'
+
+function ProductList() {
+  const { showBoundary } = useErrorBoundary()
+
+  async function loadProducts() {
+    try {
+      const data = await fetchProducts()
+      setProducts(data)
+    } catch (err) {
+      showBoundary(err) // manually trigger the nearest error boundary
+    }
+  }
+}
+
+// Reset with key — remounts boundary on route change
+<ErrorBoundary
+  key={location.pathname}
+  FallbackComponent={ErrorFallback}
+>
+  <Page />
+</ErrorBoundary>
+```
+
+---
+
+## 3. Granular Error Boundary Placement
+
+Don't just wrap the whole app — place boundaries strategically.
+
+```tsx
+function App() {
+  return (
+    <ErrorBoundary fallback={<FullPageError />}>      {/* app-level catch-all */}
+      <Navbar />
+      <main>
+        <ErrorBoundary fallback={<SidebarError />}>   {/* isolated — sidebar crash won't kill main content */}
+          <Sidebar />
+        </ErrorBoundary>
+
+        <ErrorBoundary fallback={<ContentError />}>   {/* isolated — content area */}
+          <Outlet />
+        </ErrorBoundary>
+      </main>
+
+      <ErrorBoundary fallback={null}>                 {/* silent fail — widget is non-critical */}
+        <RecommendationsWidget />
+      </ErrorBoundary>
+    </ErrorBoundary>
+  )
+}
+```
+
+> **Rule of thumb:** Wrap independent UI regions separately. A crash in one shouldn't take down the whole page.
+
+---
+
+## 4. Async Error Handling
+
+### In event handlers
+
+```tsx
+function DeleteButton({ id }) {
+  const [error, setError] = useState<Error | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function handleDelete() {
+    try {
+      setLoading(true)
+      setError(null)
+      await deleteProduct(id)
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error('Delete failed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      {error && <p role="alert" className="text-red-500">{error.message}</p>}
+      <button onClick={handleDelete} disabled={loading}>
+        {loading ? 'Deleting...' : 'Delete'}
+      </button>
+    </>
+  )
+}
+```
+
+### In useEffect
+
+```tsx
+function ProductDetail({ id }) {
+  const [product, setProduct] = useState(null)
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [error, setError] = useState<Error | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setStatus('loading')
+
+    fetchProduct(id)
+      .then(data => {
+        if (!cancelled) {
+          setProduct(data)
+          setStatus('success')
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setError(err)
+          setStatus('error')
+        }
+      })
+
+    return () => { cancelled = true }
+  }, [id])
+
+  if (status === 'loading') return <Spinner />
+  if (status === 'error')   return <ErrorMessage error={error} />
+  if (!product)             return null
+  return <Product data={product} />
+}
+```
+
+---
+
+## 5. Error Handling with TanStack Query
+
+```tsx
+// Per-query error state
+function ProductList() {
+  const { data, isError, error } = useQuery({
+    queryKey: ['products'],
+    queryFn: fetchProducts,
+    retry: (failureCount, error) => {
+      // Don't retry on 404 — only on network errors
+      if (error.status === 404) return false
+      return failureCount < 2
+    }
+  })
+
+  if (isError) return <ErrorMessage message={error.message} />
+  return <List data={data} />
+}
+
+// Mutation error state
+function AddProduct() {
+  const mutation = useMutation({
+    mutationFn: createProduct,
+    onError: (error) => {
+      toast.error(`Failed to create: ${error.message}`)
+    }
+  })
+
+  return (
+    <>
+      {mutation.isError && (
+        <Alert variant="error">{mutation.error.message}</Alert>
+      )}
+      <button onClick={() => mutation.mutate(newProduct)}>Add</button>
+    </>
+  )
+}
+
+// Global error handler — catches all query/mutation errors
+const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error, query) => {
+      // Only notify for background refetch errors (data already exists in cache)
+      if (query.state.data !== undefined) {
+        toast.error(`Data sync failed: ${error.message}`)
+      }
+    }
+  }),
+  mutationCache: new MutationCache({
+    onError: (error) => {
+      if (error.status === 401) navigate('/login')
+      if (error.status === 500) toast.error('Server error, try again later')
+    }
+  })
+})
+```
+
+---
+
+## 6. Error UI Patterns
+
+### Inline field errors (forms)
+
+```tsx
+function FormField({ label, name, error, ...props }) {
+  return (
+    <div>
+      <label htmlFor={name}>{label}</label>
+      <input
+        id={name}
+        aria-invalid={!!error}
+        aria-describedby={error ? `${name}-error` : undefined}
+        {...props}
+      />
+      {error && (
+        <p id={`${name}-error`} role="alert" className="text-red-500 text-sm">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+```
+
+### Toast notifications (non-blocking)
+
+```tsx
+// Good for: mutation errors, background sync failures, non-critical issues
+import toast from 'react-hot-toast'
+
+mutation.mutate(data, {
+  onError: () => toast.error('Failed to save changes'),
+  onSuccess: () => toast.success('Saved!')
+})
+```
+
+### Full page error (blocking)
+
+```tsx
+// Good for: critical data failed to load, auth errors
+function ErrorPage({ error, reset }: { error: Error, reset?: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen">
+      <h1 className="text-2xl font-bold">Something went wrong</h1>
+      <p className="text-gray-500 mt-2">{error.message}</p>
+      {reset && (
+        <button onClick={reset} className="mt-4 btn-primary">
+          Try again
+        </button>
+      )}
+      <Link to="/" className="mt-2 text-blue-500">Go home</Link>
+    </div>
+  )
+}
+```
+
+### Empty state vs error state
+
+```tsx
+// Distinguish between "no data" and "failed to load" — different UI, different message
+function ProductList() {
+  const { data, isError, isLoading } = useQuery(...)
+
+  if (isLoading)         return <Skeleton />
+  if (isError)           return <ErrorState onRetry={refetch} />   // ← fetch failed
+  if (data.length === 0) return <EmptyState />                     // ← no results
+  return <Grid items={data} />
+}
+```
+
+---
+
+## 7. Route-Level Error Handling (React Router v6.4+)
+
+```tsx
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <RootLayout />,
+    errorElement: <RootError />,        // catches errors from all children
+    children: [
+      {
+        path: 'products/:id',
+        element: <ProductDetail />,
+        errorElement: <ProductError />, // scoped — only catches this route's errors
+        loader: async ({ params }) => {
+          const res = await fetch(`/api/products/${params.id}`)
+          if (!res.ok) {
+            throw new Response('Product not found', { status: 404 })
+          }
+          return res.json()
+        }
+      }
+    ]
+  }
+])
+
+import { useRouteError, isRouteErrorResponse, Link } from 'react-router-dom'
+
+function RootError() {
+  const error = useRouteError()
+
+  if (isRouteErrorResponse(error)) {
+    return (
+      <div>
+        <h1>{error.status} — {error.statusText}</h1>
+        {error.status === 404 && <p>Page not found</p>}
+        {error.status === 401 && <p>You need to log in</p>}
+        {error.status === 403 && <p>Access denied</p>}
+        {error.status === 500 && <p>Server error</p>}
+        <Link to="/">Go home</Link>
+      </div>
+    )
+  }
+
+  // Unexpected JS error
+  return (
+    <div>
+      <h1>Unexpected Error</h1>
+      <p>{error?.message ?? 'Unknown error'}</p>
+    </div>
+  )
+}
+```
+
+---
+
+## 8. Global Error Handling
+
+```tsx
+// Catch unhandled promise rejections globally
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason)
+  logErrorToService(event.reason)
+  event.preventDefault() // suppress console error if handled
+})
+
+// Catch unhandled JS errors globally
+window.addEventListener('error', (event) => {
+  logErrorToService(event.error)
+})
+```
+
+---
+
+## 9. Error Logging / Monitoring
+
+```tsx
+// Integrate with Sentry (or any error monitoring service)
+import * as Sentry from '@sentry/react'
+
+Sentry.init({ dsn: 'your-dsn' })
+
+// Use Sentry's Error Boundary (wraps react-error-boundary)
+<Sentry.ErrorBoundary fallback={<ErrorPage />} showDialog>
+  <App />
+</Sentry.ErrorBoundary>
+
+// Log manually in componentDidCatch or onError
+function logErrorToService(error: Error, info?: { componentStack: string }) {
+  Sentry.captureException(error, { extra: info })
+}
+
+// Sentry + TanStack Query
+const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error) => Sentry.captureException(error)
+  })
+})
+```
+
+---
+
+## 10. Error Handling Checklist
+
+| Scenario | Strategy |
+|---|---|
+| Component crashes during render | Error Boundary |
+| Fetch fails on page load | isError state + error UI or loader errorElement |
+| Mutation fails (form submit, delete) | try/catch + inline error or toast |
+| Background refetch fails | Global query cache onError → toast |
+| 401 Unauthorized | Global handler → redirect to login |
+| 404 Not Found | Route errorElement or conditional render |
+| Network offline | Check `navigator.onLine`, show banner |
+| Form validation error | Inline field errors with ARIA |
+| Non-critical widget crashes | Error Boundary with `fallback={null}` |
+| Unexpected JS error | Global `window.onerror` + Sentry |
+
+---
+
+## 11. Anti-patterns
+
+| Anti-pattern | Problem | Fix |
+|---|---|---|
+| One error boundary for the whole app | One crash kills everything | Place boundaries around independent sections |
+| Swallowing errors silently | Impossible to debug | Always log, even if UI doesn't show error |
+| Showing raw error messages to users | Exposes internals, bad UX | Show friendly message, log technical details |
+| Not distinguishing empty vs error state | Confusing UX | Separate `isError` and `data.length === 0` paths |
+| Using alert() for errors | Blocks UI, terrible UX | Use inline errors or toast notifications |
+| Retrying on 4xx errors | Pointless — client error won't fix itself | Only retry on network errors and 5xx |
+| Not resetting error boundary on route change | Error persists after navigation | Use `key={location.pathname}` on boundary |
+
+---
+
+## 12. Quick Reference
+
+```
+Render errors        → Error Boundary (react-error-boundary)
+Async/fetch errors   → try/catch + error state or TanStack Query isError
+Event handler errors → try/catch inside the handler
+Route errors         → errorElement + useRouteError
+Global catch-all     → window.unhandledrejection + Sentry
+
+Error UI:
+  Blocking    → Full page error with retry button
+  Isolated    → Inline error within the section
+  Non-blocking → Toast notification
+  Silent      → fallback={null} for non-critical widgets
+  Form fields → Inline field errors with role="alert"
+```

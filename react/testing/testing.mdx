@@ -1,0 +1,397 @@
+# React Testing Cheatsheet
+
+---
+
+## 1. Testing Philosophy
+
+> **Test behavior, not implementation.** Tests should resemble how users interact with your app — not how your code is written internally.
+
+| Test Type | What it tests | Tools | Speed |
+|---|---|---|---|
+| Unit | Single function / hook in isolation | Vitest / Jest | ⚡ Fastest |
+| Integration | Component with its dependencies | RTL + Vitest | ⚡ Fast |
+| E2E | Full user flows in a real browser | Playwright / Cypress | 🐢 Slow |
+
+**The Testing Trophy (React's preferred model)**
+```
+        [ E2E ]           ← few, high confidence
+     [ Integration ]      ← most of your tests live here
+   [     Unit      ]      ← pure functions, utils, hooks
+  [    Static/TS   ]      ← types + linting catch a lot
+```
+
+---
+
+## 2. Setup
+
+### Vitest + React Testing Library (recommended for Vite projects)
+
+```bash
+npm install -D vitest @testing-library/react @testing-library/user-event @testing-library/jest-dom jsdom
+```
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: './src/test/setup.ts',
+  }
+})
+
+// src/test/setup.ts
+import '@testing-library/jest-dom'
+```
+
+### Jest + RTL (for CRA / non-Vite projects)
+
+```bash
+npm install -D jest @testing-library/react @testing-library/user-event @testing-library/jest-dom jest-environment-jsdom
+```
+
+---
+
+## 3. React Testing Library Core API
+
+| Method | What it does | When to use |
+|---|---|---|
+| `render()` | Renders component into jsdom | Every component test |
+| `screen.getByRole()` | Find by ARIA role | Preferred — most accessible |
+| `screen.getByText()` | Find by visible text | Buttons, headings, labels |
+| `screen.getByLabelText()` | Find form field by label | Inputs |
+| `screen.getByPlaceholderText()` | Find by placeholder | When no label exists |
+| `screen.queryBy*` | Returns null if not found | Asserting element is absent |
+| `screen.findBy*` | Async — waits for element | After async operations |
+| `screen.getAllBy*` | Returns array | Multiple matching elements |
+| `userEvent.click()` | Simulates real user click | Buttons, links |
+| `userEvent.type()` | Simulates real keystrokes | Text inputs |
+| `waitFor()` | Waits for assertion to pass | After state updates |
+
+### Query Priority (use in this order)
+```
+1. getByRole          — best, mirrors accessibility tree
+2. getByLabelText     — great for forms
+3. getByPlaceholderText
+4. getByText          — good for non-interactive elements
+5. getByDisplayValue  — for select/input current value
+6. getByAltText       — images
+7. getByTitle
+8. getByTestId        — last resort only (avoid coupling tests to implementation)
+```
+
+---
+
+## 4. Component Testing
+
+### Basic render + assertion
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import { Greeting } from './Greeting'
+
+test('renders greeting with name', () => {
+  render(<Greeting name="Alice" />)
+  expect(screen.getByText('Hello, Alice!')).toBeInTheDocument()
+})
+```
+
+### User interactions with `userEvent`
+
+```tsx
+import userEvent from '@testing-library/user-event'
+
+test('increments counter on click', async () => {
+  const user = userEvent.setup() // always setup first
+  render(<Counter />)
+
+  const button = screen.getByRole('button', { name: /increment/i })
+  await user.click(button)
+  await user.click(button)
+
+  expect(screen.getByText('Count: 2')).toBeInTheDocument()
+})
+```
+
+### Form interaction
+
+```tsx
+test('submits form with user input', async () => {
+  const user = userEvent.setup()
+  const handleSubmit = vi.fn()
+  render(<LoginForm onSubmit={handleSubmit} />)
+
+  await user.type(screen.getByLabelText(/email/i), 'alice@example.com')
+  await user.type(screen.getByLabelText(/password/i), 'secret123')
+  await user.click(screen.getByRole('button', { name: /log in/i }))
+
+  expect(handleSubmit).toHaveBeenCalledWith({
+    email: 'alice@example.com',
+    password: 'secret123'
+  })
+})
+```
+
+### Asserting element is NOT present
+
+```tsx
+test('does not show error initially', () => {
+  render(<Form />)
+  // queryBy returns null instead of throwing
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+```
+
+---
+
+## 5. Async Testing
+
+### Testing after data loads
+
+```tsx
+test('shows products after fetch', async () => {
+  render(<ProductList />)
+
+  // Assert loading state first
+  expect(screen.getByText(/loading/i)).toBeInTheDocument()
+
+  // findBy* waits (default 1000ms timeout)
+  const product = await screen.findByText('Nike Air Max')
+  expect(product).toBeInTheDocument()
+
+  // Loading gone
+  expect(screen.queryByText(/loading/i)).not.toBeInTheDocument()
+})
+```
+
+### `waitFor` — wait for arbitrary assertion
+
+```tsx
+test('shows error after failed submission', async () => {
+  const user = userEvent.setup()
+  render(<Form />)
+
+  await user.click(screen.getByRole('button', { name: /submit/i }))
+
+  await waitFor(() => {
+    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong')
+  })
+})
+```
+
+---
+
+## 6. Mocking
+
+### Mocking a module
+
+```tsx
+// Mock entire module
+vi.mock('../api/products', () => ({
+  fetchProducts: vi.fn().mockResolvedValue([
+    { id: 1, name: 'Nike Air Max', price: 120 }
+  ])
+}))
+
+test('renders fetched products', async () => {
+  render(<ProductList />)
+  expect(await screen.findByText('Nike Air Max')).toBeInTheDocument()
+})
+```
+
+### Mocking fetch / HTTP
+
+```tsx
+// Using msw (Mock Service Worker) — the best approach
+import { http, HttpResponse } from 'msw'
+import { setupServer } from 'msw/node'
+
+const server = setupServer(
+  http.get('/api/products', () => {
+    return HttpResponse.json([{ id: 1, name: 'Nike Air Max' }])
+  })
+)
+
+beforeAll(() => server.listen())
+afterEach(() => server.resetHandlers())
+afterAll(() => server.close())
+
+test('renders products from API', async () => {
+  render(<ProductList />)
+  expect(await screen.findByText('Nike Air Max')).toBeInTheDocument()
+})
+
+// Override for specific test (e.g. error case)
+test('shows error when API fails', async () => {
+  server.use(
+    http.get('/api/products', () => HttpResponse.error())
+  )
+  render(<ProductList />)
+  expect(await screen.findByRole('alert')).toBeInTheDocument()
+})
+```
+
+### Mocking callbacks / props
+
+```tsx
+test('calls onDelete when delete button clicked', async () => {
+  const user = userEvent.setup()
+  const onDelete = vi.fn()
+
+  render(<ProductCard product={mockProduct} onDelete={onDelete} />)
+  await user.click(screen.getByRole('button', { name: /delete/i }))
+
+  expect(onDelete).toHaveBeenCalledTimes(1)
+  expect(onDelete).toHaveBeenCalledWith(mockProduct.id)
+})
+```
+
+---
+
+## 7. Testing with Context / Providers
+
+### Wrap with providers in test
+
+```tsx
+// Create a custom render that wraps all providers
+import { render } from '@testing-library/react'
+import { ThemeProvider } from '../context/ThemeContext'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+function AllProviders({ children }: { children: React.ReactNode }) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } } // no retries in tests
+  })
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>{children}</ThemeProvider>
+    </QueryClientProvider>
+  )
+}
+
+// Custom render — use this everywhere instead of RTL's render
+const customRender = (ui: React.ReactElement, options = {}) =>
+  render(ui, { wrapper: AllProviders, ...options })
+
+export { customRender as render }
+export * from '@testing-library/react'
+```
+
+```tsx
+// Now all tests automatically have providers
+import { render, screen } from '../test/utils'
+
+test('shows username from auth context', () => {
+  render(<UserAvatar />)
+  expect(screen.getByText('Alice')).toBeInTheDocument()
+})
+```
+
+---
+
+## 8. Testing Custom Hooks
+
+```tsx
+import { renderHook, act } from '@testing-library/react'
+import { useCounter } from './useCounter'
+
+test('increments and decrements count', () => {
+  const { result } = renderHook(() => useCounter(0))
+
+  expect(result.current.count).toBe(0)
+
+  act(() => result.current.increment())
+  expect(result.current.count).toBe(1)
+
+  act(() => result.current.decrement())
+  expect(result.current.count).toBe(0)
+})
+
+test('does not go below min', () => {
+  const { result } = renderHook(() => useCounter(0, { min: 0 }))
+  act(() => result.current.decrement())
+  expect(result.current.count).toBe(0)
+})
+```
+
+---
+
+## 9. Testing React Router
+
+```tsx
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
+
+// Helper to render with router
+function renderWithRouter(ui: React.ReactElement, { route = '/' } = {}) {
+  return render(
+    <MemoryRouter initialEntries={[route]}>
+      {ui}
+    </MemoryRouter>
+  )
+}
+
+test('navigates to product page on click', async () => {
+  const user = userEvent.setup()
+  renderWithRouter(
+    <Routes>
+      <Route path="/" element={<ProductList />} />
+      <Route path="/products/:id" element={<ProductDetail />} />
+    </Routes>
+  )
+
+  await user.click(screen.getByText('Nike Air Max'))
+  expect(await screen.findByRole('heading', { name: /nike air max/i })).toBeInTheDocument()
+})
+```
+
+---
+
+## 10. Common Anti-patterns
+
+| Anti-pattern | Problem | Fix |
+|---|---|---|
+| `getByTestId` everywhere | Tests coupled to implementation | Use `getByRole`, `getByLabelText` first |
+| Testing implementation details | Tests break on refactor without bugs | Test what the user sees/does |
+| Not using `userEvent` | `fireEvent` doesn't simulate real browser events | Always prefer `userEvent.setup()` |
+| Missing `await` on async queries | Tests pass vacuously or give false negatives | Use `findBy*` or `await waitFor(...)` |
+| Shared mutable state between tests | Tests affect each other | Reset in `afterEach`, use `vi.clearAllMocks()` |
+| Snapshots for everything | Brittle, meaningless diffs | Only snapshot stable, small UI units |
+| Testing library internals | Fragile, refactor-sensitive | Test the public API / rendered output |
+| No `retry: false` in React Query tests | Tests hang on retries | Set `retry: false` in test QueryClient |
+
+---
+
+## 11. Snapshot Testing
+
+```tsx
+// ✅ Good use — small, stable, pure UI component
+test('Badge renders correctly', () => {
+  const { container } = render(<Badge variant="success">Active</Badge>)
+  expect(container).toMatchSnapshot()
+})
+
+// ❌ Bad use — large components, components with dynamic data
+// Snapshots become noise and get blindly updated
+```
+
+---
+
+## 12. Quick Reference
+
+```
+What to test:
+  ✅ Component renders without crashing
+  ✅ Correct output for given props
+  ✅ User interactions trigger right behavior
+  ✅ Async states: loading → success / error
+  ✅ Edge cases: empty state, single item, max items
+  ✅ Accessibility (roles, labels)
+
+What NOT to test:
+  ❌ Internal state values directly
+  ❌ CSS classes or style implementation
+  ❌ Third-party library internals
+  ❌ Every single prop combination (use Storybook for that)
+```
