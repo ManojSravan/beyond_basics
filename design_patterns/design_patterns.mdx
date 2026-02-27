@@ -1,0 +1,57 @@
+# Frontend Design Patterns Cheat Sheet
+
+## 1. Component Patterns
+
+| Pattern | What | Example / Usage |
+|---------|------|----------------|
+| Presentational & Container | Separate UI and logic | `Presentational` = UI only, `Container` = fetches data, passes as props |
+| Compound Components | Group related components sharing implicit state | `<Tabs><TabList/><TabPanels/></Tabs>` |
+| Controlled vs Uncontrolled | State managed by parent vs component itself | Controlled: `<Input value={val} onChange={setVal}/>`, Uncontrolled: `<input ref={inputRef}/>` |
+| HOC (Higher-Order Component) | Wrap component to extend behavior | `withAuth(Component)` |
+| Render Props | Delegate rendering via function prop | `<DataFetcher render={data => <UI data={data}/>} />` |
+| Function as Children / Hook Composition | Share logic via hooks instead of HOC | `const {form, handleSubmit} = useForm()` |
+
+---
+
+## 2. State Management Patterns
+
+| Pattern | What | Example / Usage |
+|---------|------|----------------|
+| Lifting State Up | Move shared state to common ancestor | Parent handles value & onChange, passes to children |
+| State Colocation | Keep state close to where used | Local component state instead of global |
+| Reducer Pattern | Manage complex state transitions | `const [state, dispatch] = useReducer(reducer, initialState)` |
+| Context + Reducer | Global-ish state without Redux | Auth, Theme, Notifications |
+
+---
+
+## 3. Performance Patterns
+
+| Pattern | What | Example / Usage |
+|---------|------|----------------|
+| Memoization | Avoid unnecessary renders | `React.memo(Component)`, `useMemo()`, `useCallback()` |
+| Lazy Loading | Code splitting for performance | `const Page = React.lazy(() => import('./Page'))` |
+| Virtualization | Efficient rendering for large lists | `react-window`, `react-virtualized` |
+| Debounce / Throttle | Optimize events | `debounce(handleInput, 300)` |
+
+---
+
+## 4. UI & Rendering Patterns
+
+| Pattern | What | Example / Usage |
+|---------|------|----------------|
+| Presentational vs Logical Separation | Keep UI and logic separate | Fetch data in container, pass to UI component |
+| Slot / Portal | Render outside parent DOM | `<Portal><Modal/></Portal>` |
+| Error Boundary | Catch component-level errors | `<ErrorBoundary><Component/></ErrorBoundary>` |
+
+---
+
+## 5. Architectural Patterns
+
+| Pattern | What | Example / Usage |
+|---------|------|----------------|
+| Atomic Design | Hierarchical component organization | Atoms → Molecules → Organisms → Templates → Pages |
+| Feature Folders / Module-based | Organize by feature | `feature/Component.tsx`, `feature/hooks.ts`, `feature/tests.ts` |
+
+---
+
+> **Tip:** Start by mastering **Component Patterns** + **State Management** — these will impact day-to-day frontend work the most.
